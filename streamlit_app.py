@@ -337,6 +337,17 @@ def describe_image_for_support(image_bytes: bytes, mime: str) -> str:
         return f"[Image analysis failed: {exc}]"
 
 
+def _image_placeholder_analysis_disabled() -> str:
+    """Clear instructions for the LLM when vision is off (sidebar toggle)."""
+    return (
+        "The customer attached an image in the chat UI, but automatic image-to-text is turned off "
+        "(Analyze images in the sidebar). You cannot see the pixels. "
+        "Reply helpfully: briefly acknowledge the attachment, ask them to describe what it shows "
+        "(error text, phone numbers, screen name) or to turn on “Analyze images” in the UI and resend. "
+        "Do not say you are unable to help with images in general—focus on this limitation and next steps."
+    )
+
+
 def describe_image_cached(image_bytes: bytes, mime: str) -> str:
     """Cache image descriptions so repeated sends are instant."""
     cache = st.session_state.setdefault("image_desc_cache", {})
@@ -599,7 +610,7 @@ def main() -> None:
                                 with st.spinner("Analyzing image…"):
                                     analysis = describe_image_cached(raw, mime)
                             else:
-                                analysis = "[Image attached. Image analysis is disabled in sidebar.]"
+                                analysis = _image_placeholder_analysis_disabled()
                             payload = f"[User sent an image]\n{analysis}"
                             ir = client.post(
                                 f"{api}/sessions/{sid}/messages",
@@ -625,7 +636,11 @@ def main() -> None:
                             user_msg = prompt.strip()
                             if up is not None:
                                 with st.spinner("Analyzing image…"):
-                                    img_part = describe_image_cached(up.getvalue(), up.type or "image/jpeg") if image_scan_enabled else "[Image attached. Image analysis is disabled in sidebar.]"
+                                    img_part = (
+                                        describe_image_cached(up.getvalue(), up.type or "image/jpeg")
+                                        if image_scan_enabled
+                                        else _image_placeholder_analysis_disabled()
+                                    )
                                     user_msg = (
                                         f"{user_msg}\n\n[Image details for support]\n"
                                         f"{img_part}"
