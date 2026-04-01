@@ -212,7 +212,7 @@ async def execute_composio_tool(
 
 
 @p.tool
-async def list_compxosio_tools(
+async def list_composio_tools(
     context: p.ToolContext,
     toolkit: Annotated[
         str,

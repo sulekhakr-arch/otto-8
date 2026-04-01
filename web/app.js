@@ -603,7 +603,23 @@ function renderDetailView(bot) {
     <div class="detail-section">
       <div class="section-header">
         <h3>Guidelines</h3>
-        <button class="btn primary small" onclick="openAddGuidelineForm()">+ Add Guideline</button>
+        <div class="section-actions">
+          <button type="button" class="btn ghost small" onclick="openGuidelinesJsonEditor()">JSON</button>
+          <button type="button" class="btn primary small" onclick="openAddGuidelineForm()">+ Add</button>
+        </div>
+      </div>
+      <div id="guidelinesJsonPanel" class="json-edit-panel hidden">
+        <p class="json-hint">
+          Array of objects: <code>id</code> (keep for updates), <code>condition</code>, <code>action</code>,
+          <code>description</code>, <code>criticality</code> (low/medium/high). Omit <code>id</code> to add.
+          Remove an entry and apply to delete it.
+        </p>
+        <textarea id="guidelinesJsonTextarea" class="json-textarea" spellcheck="false" aria-label="Guidelines JSON"></textarea>
+        <div id="guidelinesJsonError" class="json-error"></div>
+        <div class="form-actions" style="border-top: none; margin-top: 10px; padding-top: 0;">
+          <button type="button" class="btn ghost" onclick="cancelGuidelinesJson()">Cancel</button>
+          <button type="button" class="btn primary" onclick="applyGuidelinesJson()">Apply JSON</button>
+        </div>
       </div>
       <div class="detail-items" id="guidelinesContainer">
         ${guidelinesHtml}
@@ -613,7 +629,22 @@ function renderDetailView(bot) {
     <div class="detail-section">
       <div class="section-header">
         <h3>Journeys</h3>
-        <button class="btn primary small" onclick="openAddJourneyForm()">+ Add Journey</button>
+        <div class="section-actions">
+          <button type="button" class="btn ghost small" onclick="openJourneysJsonEditor()">JSON</button>
+          <button type="button" class="btn primary small" onclick="openAddJourneyForm()">+ Add</button>
+        </div>
+      </div>
+      <div id="journeysJsonPanel" class="json-edit-panel hidden">
+        <p class="json-hint">
+          Array of objects: <code>id</code>, <code>title</code>, <code>description</code>, <code>conditions</code> (string array).
+          Omit <code>id</code> to add. Remove an entry and apply to delete it.
+        </p>
+        <textarea id="journeysJsonTextarea" class="json-textarea" spellcheck="false" aria-label="Journeys JSON"></textarea>
+        <div id="journeysJsonError" class="json-error"></div>
+        <div class="form-actions" style="border-top: none; margin-top: 10px; padding-top: 0;">
+          <button type="button" class="btn ghost" onclick="cancelJourneysJson()">Cancel</button>
+          <button type="button" class="btn primary" onclick="applyJourneysJson()">Apply JSON</button>
+        </div>
       </div>
       <div class="detail-items" id="journeysContainer">
         ${journeysHtml}
@@ -713,8 +744,249 @@ function renderDetailView(bot) {
   `;
 }
 
+// -----------------------------------------------------------------------------
+// Guidelines / Journeys JSON editor (bulk edit via API)
+// -----------------------------------------------------------------------------
+
+function guidelinesToJsonDraft(bot) {
+  return (bot?.guidelines || []).map((g) => ({
+    id: g.id,
+    condition: g.condition || "",
+    action: g.action ?? null,
+    description: g.description ?? null,
+    criticality: String(g.criticality || "medium").toLowerCase(),
+  }));
+}
+
+function journeysToJsonDraft(bot) {
+  return (bot?.journeys || []).map((j) => ({
+    id: j.id,
+    title: j.title || "",
+    description: j.description || "",
+    conditions: Array.isArray(j.conditions) ? [...j.conditions] : [],
+  }));
+}
+
+function openGuidelinesJsonEditor() {
+  closeAddGuidelineForm();
+  closeEditGuidelineForm();
+  cancelJourneysJson();
+  const panel = document.getElementById("guidelinesJsonPanel");
+  const ta = document.getElementById("guidelinesJsonTextarea");
+  const err = document.getElementById("guidelinesJsonError");
+  if (!panel || !ta) return;
+  err.textContent = "";
+  ta.value = JSON.stringify(guidelinesToJsonDraft(detailState.bot), null, 2);
+  panel.classList.remove("hidden");
+  ta.focus();
+}
+
+function cancelGuidelinesJson() {
+  document.getElementById("guidelinesJsonPanel")?.classList.add("hidden");
+  const err = document.getElementById("guidelinesJsonError");
+  if (err) err.textContent = "";
+}
+
+function openJourneysJsonEditor() {
+  closeAddJourneyForm();
+  closeEditJourneyForm();
+  cancelGuidelinesJson();
+  const panel = document.getElementById("journeysJsonPanel");
+  const ta = document.getElementById("journeysJsonTextarea");
+  const err = document.getElementById("journeysJsonError");
+  if (!panel || !ta) return;
+  err.textContent = "";
+  ta.value = JSON.stringify(journeysToJsonDraft(detailState.bot), null, 2);
+  panel.classList.remove("hidden");
+  ta.focus();
+}
+
+function cancelJourneysJson() {
+  document.getElementById("journeysJsonPanel")?.classList.add("hidden");
+  const err = document.getElementById("journeysJsonError");
+  if (err) err.textContent = "";
+}
+
+async function applyGuidelinesJson() {
+  const ta = document.getElementById("guidelinesJsonTextarea");
+  const errEl = document.getElementById("guidelinesJsonError");
+  if (!ta || !errEl) return;
+  errEl.textContent = "";
+
+  let items;
+  try {
+    items = JSON.parse(ta.value);
+  } catch (e) {
+    errEl.textContent = `Invalid JSON: ${e.message}`;
+    return;
+  }
+  if (!Array.isArray(items)) {
+    errEl.textContent = "Root must be a JSON array.";
+    return;
+  }
+
+  const botId = detailState.botId;
+  const oldList = detailState.bot?.guidelines || [];
+  const oldById = Object.fromEntries(oldList.map((g) => [g.id, g]));
+  const oldIds = new Set(oldList.map((g) => g.id).filter(Boolean));
+  const newIds = new Set(items.filter((i) => i && i.id).map((i) => i.id));
+
+  try {
+    for (const id of oldIds) {
+      if (!newIds.has(id)) {
+        const res = await fetch(`${API_BASE_URL}${ENDPOINTS.deleteGuideline(id)}`, { method: "DELETE" });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `Delete guideline failed (${res.status})`);
+        }
+      }
+    }
+
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const id = item.id;
+      if (id && oldById[id]) {
+        const body = {};
+        for (const k of ["condition", "action", "description", "criticality"]) {
+          if (Object.prototype.hasOwnProperty.call(item, k)) body[k] = item[k];
+        }
+        if (Object.keys(body).length === 0) continue;
+        const res = await fetch(`${API_BASE_URL}${ENDPOINTS.updateGuideline(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `Update guideline ${id} failed (${res.status})`);
+        }
+      } else {
+        const condition = typeof item.condition === "string" ? item.condition.trim() : "";
+        if (!condition) {
+          throw new Error("Each new guideline must include a non-empty condition.");
+        }
+        const payload = {
+          condition,
+          action: item.action ?? null,
+          description: item.description ?? null,
+          criticality: item.criticality != null ? String(item.criticality).toLowerCase() : "medium",
+        };
+        const res = await fetch(`${API_BASE_URL}${ENDPOINTS.addGuidelineToBot(botId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `Create guideline failed (${res.status})`);
+        }
+      }
+    }
+
+    showToast("Guidelines saved from JSON");
+    cancelGuidelinesJson();
+    await refreshDetailView();
+  } catch (e) {
+    console.error(e);
+    errEl.textContent = e.message || "Failed to apply guidelines JSON";
+    showToast(errEl.textContent, true);
+  }
+}
+
+async function applyJourneysJson() {
+  const ta = document.getElementById("journeysJsonTextarea");
+  const errEl = document.getElementById("journeysJsonError");
+  if (!ta || !errEl) return;
+  errEl.textContent = "";
+
+  let items;
+  try {
+    items = JSON.parse(ta.value);
+  } catch (e) {
+    errEl.textContent = `Invalid JSON: ${e.message}`;
+    return;
+  }
+  if (!Array.isArray(items)) {
+    errEl.textContent = "Root must be a JSON array.";
+    return;
+  }
+
+  const botId = detailState.botId;
+  const oldList = detailState.bot?.journeys || [];
+  const oldById = Object.fromEntries(oldList.map((j) => [j.id, j]));
+  const oldIds = new Set(oldList.map((j) => j.id).filter(Boolean));
+  const newIds = new Set(items.filter((i) => i && i.id).map((i) => i.id));
+
+  try {
+    for (const id of oldIds) {
+      if (!newIds.has(id)) {
+        const res = await fetch(`${API_BASE_URL}${ENDPOINTS.deleteJourney(id)}`, { method: "DELETE" });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `Delete journey failed (${res.status})`);
+        }
+      }
+    }
+
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const id = item.id;
+      if (id && oldById[id]) {
+        const body = {};
+        for (const k of ["title", "description", "conditions"]) {
+          if (Object.prototype.hasOwnProperty.call(item, k)) body[k] = item[k];
+        }
+        if (Object.keys(body).length === 0) continue;
+        const res = await fetch(`${API_BASE_URL}${ENDPOINTS.updateJourney(id)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `Update journey ${id} failed (${res.status})`);
+        }
+      } else {
+        const title = typeof item.title === "string" ? item.title.trim() : "";
+        const description = typeof item.description === "string" ? item.description.trim() : "";
+        const conditions = Array.isArray(item.conditions)
+          ? item.conditions.map((c) => String(c).trim()).filter(Boolean)
+          : [];
+        if (!title || !description || conditions.length === 0) {
+          throw new Error("Each new journey needs title, description, and a non-empty conditions array.");
+        }
+        const res = await fetch(`${API_BASE_URL}${ENDPOINTS.addJourneyToBot(botId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, description, conditions }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `Create journey failed (${res.status})`);
+        }
+      }
+    }
+
+    showToast("Journeys saved from JSON");
+    cancelJourneysJson();
+    await refreshDetailView();
+  } catch (e) {
+    console.error(e);
+    errEl.textContent = e.message || "Failed to apply journeys JSON";
+    showToast(errEl.textContent, true);
+  }
+}
+
+window.openGuidelinesJsonEditor = openGuidelinesJsonEditor;
+window.cancelGuidelinesJson = cancelGuidelinesJson;
+window.applyGuidelinesJson = applyGuidelinesJson;
+window.openJourneysJsonEditor = openJourneysJsonEditor;
+window.cancelJourneysJson = cancelJourneysJson;
+window.applyJourneysJson = applyJourneysJson;
+
 // Inline form handlers
 function openAddGuidelineForm() {
+  cancelGuidelinesJson();
   document.getElementById("addGuidelineForm").classList.remove("hidden");
   document.getElementById("newGuidelineCondition").focus();
 }
@@ -727,6 +999,7 @@ function closeAddGuidelineForm() {
 }
 
 function openAddJourneyForm() {
+  cancelJourneysJson();
   document.getElementById("addJourneyForm").classList.remove("hidden");
   document.getElementById("newJourneyTitle").focus();
 }
@@ -741,7 +1014,8 @@ function closeAddJourneyForm() {
 async function editGuideline(guidelineId) {
   const guideline = detailState.bot?.guidelines?.find(g => g.id === guidelineId);
   if (!guideline) return;
-  
+
+  cancelGuidelinesJson();
   document.getElementById("editGuidelineId").value = guidelineId;
   document.getElementById("editGuidelineCondition").value = guideline.condition || "";
   document.getElementById("editGuidelineAction").value = guideline.action || "";
@@ -758,7 +1032,8 @@ function closeEditGuidelineForm() {
 async function editJourney(journeyId) {
   const journey = detailState.bot?.journeys?.find(j => j.id === journeyId);
   if (!journey) return;
-  
+
+  cancelJourneysJson();
   document.getElementById("editJourneyId").value = journeyId;
   document.getElementById("editJourneyTitle").value = journey.title || "";
   document.getElementById("editJourneyDescription").value = journey.description || "";

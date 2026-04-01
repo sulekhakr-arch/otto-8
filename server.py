@@ -631,19 +631,29 @@ async def main():
     print(f"📡 Parlant API: {PARLANT_API_BASE_URL}")
     print(f"⏱️  API Timeout: {PARLANT_API_TIMEOUT}s")
     print("-" * 50)
-    
-    async with p.Server(nlp_service=p.NLPServices.openai) as server:
-        # Create Otto orchestrator agent
-        agent = await server.create_agent(
-            name="Otto",
-            description=(
-                "Primary orchestrator for converting a business chatbot description into a fully "
-                "configured Parlant bot. Collect requirements, detect gaps, ask focused follow-ups, "
-                "produce a validated specification, and create the bot using Parlant REST APIs."
-            ),
-        )
-        
-        print(f"✅ Created Otto agent (ID: {agent.id})")
+
+    mongodb_uri = (os.getenv("MONGODB_URI") or "").strip()
+    persistence_enabled = False
+    if mongodb_uri:
+        success, msg = await initialize_persistence(mongodb_uri)
+        persistence_enabled = success
+        print(f"✅ {msg}" if success else f"⚠️  {msg}")
+    else:
+        print("📝 MongoDB disabled (no MONGODB_URI) — domain rehydration skipped")
+
+    try:
+        async with p.Server(nlp_service=p.NLPServices.openai) as server:
+            # Create Otto orchestrator agent
+            agent = await server.create_agent(
+                name="Otto",
+                description=(
+                    "Primary orchestrator for converting a business chatbot description into a fully "
+                    "configured Parlant bot. Collect requirements, detect gaps, ask focused follow-ups, "
+                    "produce a validated specification, and create the bot using Parlant REST APIs."
+                ),
+            )
+
+            print(f"✅ Created Otto agent (ID: {agent.id})")
 
             await agent.create_guideline(
                 condition="When a business user provides a bot description or asks to create a bot.",
@@ -675,18 +685,18 @@ async def main():
                 criticality=p.Criticality.MEDIUM,
             )
 
-        # Guideline 4: Bot creation via REST API
-        await agent.create_guideline(
-            condition="When all required parameters are explicit, validated, and confirmed by the user.",
-            action=(
-                "Assemble a complete JSON bot specification with all required fields, validate it "
-                "against the schema, and call create_parlant_bot to instantiate the bot via REST API. "
-                "Provide the user with the created bot details including agent ID and confirmation."
-            ),
-            description="Only create bots from a fully validated specification using REST API.",
-            criticality=p.Criticality.HIGH,
-            tools=[create_parlant_bot],
-        )
+            # Guideline 4: Bot creation via REST API
+            await agent.create_guideline(
+                condition="When all required parameters are explicit, validated, and confirmed by the user.",
+                action=(
+                    "Assemble a complete JSON bot specification with all required fields, validate it "
+                    "against the schema, and call create_parlant_bot to instantiate the bot via REST API. "
+                    "Provide the user with the created bot details including agent ID and confirmation."
+                ),
+                description="Only create bots from a fully validated specification using REST API.",
+                criticality=p.Criticality.HIGH,
+                tools=[create_parlant_bot],
+            )
 
             await agent.create_journey(
                 title="Bot Intake & Clarification",
@@ -705,7 +715,6 @@ async def main():
                 print("📭 MongoDB disabled - no bots to load")
 
             print("✅ Configuration complete. Server will start now.")
-
     finally:
         await shutdown_persistence()
 

@@ -953,7 +953,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 14px;
+}
+
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .section-header h3 {
@@ -1142,4 +1150,61 @@ body {
 
 .toast.error {
   background: #dc2626;
+}
+
+/* JSON editor (guidelines / journeys) */
+.json-edit-panel {
+  margin-bottom: 16px;
+  padding: 14px;
+  background: #0f172a;
+  border-radius: 12px;
+  border: 1px solid #334155;
+}
+
+.json-edit-panel.hidden {
+  display: none;
+}
+
+.json-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.json-hint code {
+  font-size: 11px;
+  background: #1e293b;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #e2e8f0;
+}
+
+.json-textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: 45vh;
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: #e2e8f0;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.json-textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.json-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #fca5a5;
+  min-height: 1em;
 }

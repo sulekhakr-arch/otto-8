@@ -226,8 +226,11 @@ class ParlantClient:
     # -------------------------------------------------------------------------
     
     async def create_session(self, agent_id: str, customer_id: Optional[str] = None) -> tuple[bool, Any]:
-        data = {"customer_id": customer_id} if customer_id else None
-        return await self._request("POST", f"/agents/{agent_id}/sessions", data)
+        # Parlant 3.x: POST /sessions with agent_id in body (not /agents/{id}/sessions)
+        data: dict[str, Any] = {"agent_id": agent_id}
+        if customer_id:
+            data["customer_id"] = customer_id
+        return await self._request("POST", "/sessions", data)
     
     async def get_session(self, session_id: str) -> tuple[bool, Any]:
         return await self._request("GET", f"/sessions/{session_id}")

@@ -1025,13 +1025,11 @@ class BotCreationWrapper:
         Returns:
             Optional[str]: The created session ID, or None if failed
         """
-        payload = {}
+        payload: dict[str, Any] = {"agent_id": agent_id}
         if customer_id:
             payload["customer_id"] = customer_id
-        
-        success, response = await self._call_parlant_api(
-            "POST", f"/agents/{agent_id}/sessions", payload if payload else None
-        )
+
+        success, response = await self._call_parlant_api("POST", "/sessions", payload)
         return response.get("id") if success else None
     
     async def send_message(self, session_id: str, message: str) -> bool:

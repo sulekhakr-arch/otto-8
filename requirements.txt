@@ -3,6 +3,9 @@
 # Parlant SDK with MongoDB support
 parlant[mongo]>=3.1.2
 
+# Async MongoDB driver (domain_persistence.py)
+motor>=3.3.0
+
 # HTTP client for REST API calls
 httpx>=0.28.0
 
@@ -11,3 +14,9 @@ python-dotenv>=1.0.0
 
 # OpenAI integration (required for NLP)
 openai>=1.0.0
+
+# Composio (GitHub, Slack, Gmail, etc.) — see README_COMPOSIO.md
+composio>=0.11.0
+
+# Simple UI (optional): streamlit run streamlit_app.py
+streamlit>=1.28.0

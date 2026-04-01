@@ -1,0 +1,82 @@
+# Otto stack for local / Docker Desktop
+#
+# Setup:  cp env.example .env   then set OPENAI_API_KEY
+# Run:    docker compose up --build
+# UI:     http://localhost:8501
+# API:    http://localhost:8801/docs
+# Parlant http://localhost:8800
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - otto_mongo_data:/data/db
+
+  parlant:
+    build: .
+    restart: unless-stopped
+    command: ["python", "server.py"]
+    ports:
+      - "8800:8800"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env (copy env.example)}
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+      PARLANT_API_BASE_URL: http://localhost:8800
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
+    depends_on:
+      - mongo
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1',8800)); s.close()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 25
+      start_period: 120s
+
+  api:
+    build: .
+    restart: unless-stopped
+    command: ["python", "api_server.py"]
+    ports:
+      - "8801:8801"
+    environment:
+      API_HOST: "0.0.0.0"
+      API_PORT: "8801"
+      PARLANT_API_BASE_URL: http://parlant:8800
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
+    depends_on:
+      mongo:
+        condition: service_started
+      parlant:
+        condition: service_healthy
+
+  streamlit:
+    build: .
+    restart: unless-stopped
+    command:
+      [
+        "streamlit",
+        "run",
+        "streamlit_app.py",
+        "--server.address=0.0.0.0",
+        "--server.port=8501",
+        "--browser.gatherUsageStats=false",
+      ]
+    ports:
+      - "8501:8501"
+    environment:
+      OTTO_API_BASE: http://api:8801
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      - api
+
+volumes:
+  otto_mongo_data:
