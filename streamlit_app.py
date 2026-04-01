@@ -1,7 +1,13 @@
 """
-Simple Streamlit UI for the Bot Management API.
+Streamlit UI for Otto Bot Creator — all 6 Parlant ATOM components:
+  1. Bot Profile        (name, description, mode, iterations)
+  2. Guidelines         (condition / action / criticality)
+  3. Journeys           (trigger conditions, nodes, flow)
+  4. Terms (Glossary)   (name, definition, synonyms)
+  5. Context Variables  (name, description, default value)
+  6. Tools              (view registered services + Heyo tool schemas)
 
-Run (with venv active, API on 8801, Parlant on 8800):
+Run (venv active, api_server on 8801, Parlant on 8800):
     streamlit run streamlit_app.py
 """
 
@@ -18,17 +24,17 @@ from typing import Any
 
 import httpx
 import streamlit as st
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 load_dotenv()
 
 _APP_DIR = Path(__file__).resolve().parent
 HEYO_SPEC_PATH = _APP_DIR / "data" / "heyo_bot_spec.json"
+ENV_PATH = _APP_DIR / ".env"
 
-# In Docker, set OTTO_API_BASE=http://api:8801 (see docker-compose.yml).
 DEFAULT_API = os.getenv("OTTO_API_BASE", "http://localhost:8801").rstrip("/")
+DEFAULT_PARLANT = os.getenv("PARLANT_BASE", "http://localhost:8800").rstrip("/")
 
-# Minimal valid POST /bots body (edit before create)
 DEFAULT_CREATE_SPEC = """{
   "name": "Support Bot",
   "purpose": "Answer common customer questions.",
@@ -59,6 +65,8 @@ DEFAULT_CREATE_SPEC = """{
 }"""
 
 
+# ── Utility helpers ────────────────────────────────────────────────────────────
+
 def normalize_bot_list(payload: Any) -> list[dict]:
     if isinstance(payload, list):
         return payload
@@ -85,6 +93,18 @@ def _detail_error(r: httpx.Response) -> str:
         return r.text[:500] or f"HTTP {r.status_code}"
 
 
+def _composition_mode_index(raw: Any) -> int:
+    opts = ["FLUID", "COMPOSITED", "STRICT"]
+    cm = str(raw or "fluid").strip().upper()
+    if cm == "COMPOSITED" or "COMPOSIT" in cm:
+        return 1
+    if cm == "STRICT":
+        return 2
+    return 0
+
+
+# ── Guideline helpers ──────────────────────────────────────────────────────────
+
 def guidelines_draft(bot: dict) -> list[dict]:
     out = []
     for g in bot.get("guidelines") or []:
@@ -95,21 +115,6 @@ def guidelines_draft(bot: dict) -> list[dict]:
                 "action": g.get("action"),
                 "description": g.get("description"),
                 "criticality": str(g.get("criticality") or "medium").lower(),
-            }
-        )
-    return out
-
-
-def journeys_draft(bot: dict) -> list[dict]:
-    out = []
-    for j in bot.get("journeys") or []:
-        cond = j.get("conditions") or []
-        out.append(
-            {
-                "id": j.get("id"),
-                "title": j.get("title") or "",
-                "description": j.get("description") or "",
-                "conditions": list(cond) if isinstance(cond, list) else [],
             }
         )
     return out
@@ -136,17 +141,13 @@ def apply_guidelines_sync(client: httpx.Client, api: str, bot_id: str, bot: dict
             continue
         gid = item.get("id")
         if gid and gid in old_by_id:
-            body = {}
-            for k in ("condition", "action", "description", "criticality"):
-                if k in item:
-                    body[k] = item[k]
-            if not body:
-                continue
-            r = client.patch(f"{api}/guidelines/{gid}", json=body)
-            if r.status_code >= 400:
-                raise RuntimeError(_detail_error(r))
+            body = {k: item[k] for k in ("condition", "action", "description", "criticality") if k in item}
+            if body:
+                r = client.patch(f"{api}/guidelines/{gid}", json=body)
+                if r.status_code >= 400:
+                    raise RuntimeError(_detail_error(r))
         else:
-            cond = (item.get("condition") or "").strip() if isinstance(item.get("condition"), str) else ""
+            cond = (item.get("condition") or "").strip()
             if not cond:
                 raise ValueError("Each new guideline needs a non-empty condition.")
             payload = {
@@ -158,6 +159,23 @@ def apply_guidelines_sync(client: httpx.Client, api: str, bot_id: str, bot: dict
             r = client.post(f"{api}/bots/{bot_id}/guidelines", json=payload)
             if r.status_code >= 400:
                 raise RuntimeError(_detail_error(r))
+
+
+# ── Journey helpers ────────────────────────────────────────────────────────────
+
+def journeys_draft(bot: dict) -> list[dict]:
+    out = []
+    for j in bot.get("journeys") or []:
+        cond = j.get("conditions") or []
+        out.append(
+            {
+                "id": j.get("id"),
+                "title": j.get("title") or "",
+                "description": j.get("description") or "",
+                "conditions": list(cond) if isinstance(cond, list) else [],
+            }
+        )
+    return out
 
 
 def apply_journeys_sync(client: httpx.Client, api: str, bot_id: str, bot: dict, text: str) -> None:
@@ -181,24 +199,16 @@ def apply_journeys_sync(client: httpx.Client, api: str, bot_id: str, bot: dict, 
             continue
         jid = item.get("id")
         if jid and jid in old_by_id:
-            body = {}
-            for k in ("title", "description", "conditions"):
-                if k in item:
-                    body[k] = item[k]
-            if not body:
-                continue
-            r = client.patch(f"{api}/journeys/{jid}", json=body)
-            if r.status_code >= 400:
-                raise RuntimeError(_detail_error(r))
+            body = {k: item[k] for k in ("title", "description", "conditions") if k in item}
+            if body:
+                r = client.patch(f"{api}/journeys/{jid}", json=body)
+                if r.status_code >= 400:
+                    raise RuntimeError(_detail_error(r))
         else:
-            title = (item.get("title") or "").strip() if isinstance(item.get("title"), str) else ""
-            desc = (item.get("description") or "").strip() if isinstance(item.get("description"), str) else ""
+            title = (item.get("title") or "").strip()
+            desc = (item.get("description") or "").strip()
             conds = item.get("conditions")
-            conditions = (
-                [str(c).strip() for c in conds if str(c).strip()]
-                if isinstance(conds, list)
-                else []
-            )
+            conditions = [str(c).strip() for c in conds if str(c).strip()] if isinstance(conds, list) else []
             if not title or not desc or not conditions:
                 raise ValueError("Each new journey needs title, description, and a non-empty conditions array.")
             r = client.post(
@@ -208,6 +218,539 @@ def apply_journeys_sync(client: httpx.Client, api: str, bot_id: str, bot: dict, 
             if r.status_code >= 400:
                 raise RuntimeError(_detail_error(r))
 
+
+# ── Terms (Glossary) helpers ───────────────────────────────────────────────────
+
+def fetch_terms(p_client: httpx.Client, parlant: str) -> list[dict]:
+    r = p_client.get(f"{parlant}/terms")
+    if r.status_code >= 400:
+        return []
+    return r.json() or []
+
+
+def apply_terms_sync(p_client: httpx.Client, parlant: str, text: str) -> None:
+    items = json.loads(text)
+    if not isinstance(items, list):
+        raise ValueError("Root must be a JSON array.")
+
+    existing = fetch_terms(p_client, parlant)
+    old_by_id = {t["id"]: t for t in existing if t.get("id")}
+    old_ids = set(old_by_id.keys())
+    new_ids = {i["id"] for i in items if isinstance(i, dict) and i.get("id")}
+
+    for tid in old_ids:
+        if tid not in new_ids:
+            r = p_client.delete(f"{parlant}/terms/{tid}")
+            if r.status_code >= 400:
+                raise RuntimeError(f"Delete term {tid}: {r.text[:200]}")
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        tid = item.get("id")
+        if tid and tid in old_by_id:
+            body = {k: item[k] for k in ("name", "description", "synonyms") if k in item}
+            if body:
+                r = p_client.patch(f"{parlant}/terms/{tid}", json=body)
+                if r.status_code >= 400:
+                    raise RuntimeError(f"Update term: {r.text[:200]}")
+        else:
+            name = (item.get("name") or "").strip()
+            if not name:
+                raise ValueError("Each new term needs a non-empty name.")
+            r = p_client.post(f"{parlant}/terms", json={
+                "name": name,
+                "description": item.get("description") or "",
+                "synonyms": item.get("synonyms") or [],
+            })
+            if r.status_code >= 400:
+                raise RuntimeError(f"Create term '{name}': {r.text[:200]}")
+
+
+def render_terms_tab(p_client: httpx.Client, parlant: str) -> None:
+    terms = fetch_terms(p_client, parlant)
+
+    col_l, col_r = st.columns([3, 1])
+    with col_l:
+        st.subheader(f"Terms / Glossary  ({len(terms)} terms)")
+    with col_r:
+        if st.button("Refresh", key="refresh_terms"):
+            st.rerun()
+
+    st.caption(
+        "Shared business vocabulary — standardizes how the agent interprets words "
+        "like WABA, Superadmin Number, Escalation, etc. across every conversation."
+    )
+
+    # ── JSON bulk editor ───────────────────────────────────────────────────────
+    with st.expander("Bulk edit as JSON", expanded=False):
+        draft = [
+            {"id": t.get("id"), "name": t.get("name") or "", "description": t.get("description") or "", "synonyms": t.get("synonyms") or []}
+            for t in terms
+        ]
+        t_text = st.text_area("Terms JSON", value=json.dumps(draft, indent=2), height=320, key="terms_json")
+        if st.button("Apply terms JSON", key="apply_terms_json"):
+            try:
+                apply_terms_sync(p_client, parlant, t_text)
+                st.success("Terms saved.")
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+
+    st.divider()
+
+    # ── Per-term form editor ───────────────────────────────────────────────────
+    if not terms:
+        st.info("No terms defined yet. Add one below or load the Heyo template from the **Create bot** tab.")
+    else:
+        for i, t in enumerate(terms):
+            tid = t.get("id")
+            label = (t.get("name") or "(unnamed)")[:60]
+            with st.expander(f"{i + 1}. **{label}**", expanded=False):
+                with st.form(f"term_form_{tid}"):
+                    name = st.text_input("Name", value=t.get("name") or "")
+                    desc = st.text_area("Definition", value=t.get("description") or "", height=100)
+                    syns = st.text_area(
+                        "Synonyms (one per line)",
+                        value="\n".join(t.get("synonyms") or []),
+                        height=80,
+                    )
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        save = st.form_submit_button("Save")
+                    with c2:
+                        delete = st.form_submit_button("Delete", type="primary")
+                if save:
+                    syn_list = [s.strip() for s in syns.splitlines() if s.strip()]
+                    r = p_client.patch(f"{parlant}/terms/{tid}", json={
+                        "name": name.strip(),
+                        "description": desc.strip(),
+                        "synonyms": syn_list,
+                    })
+                    if r.status_code >= 400:
+                        st.error(r.text[:200])
+                    else:
+                        st.success("Term saved.")
+                        st.rerun()
+                if delete:
+                    r = p_client.delete(f"{parlant}/terms/{tid}")
+                    if r.status_code >= 400:
+                        st.error(r.text[:200])
+                    else:
+                        st.success("Deleted.")
+                        st.rerun()
+
+    st.divider()
+    st.markdown("**Add new term**")
+    with st.form("add_term_form"):
+        new_name = st.text_input("Name")
+        new_desc = st.text_area("Definition", height=80)
+        new_syns = st.text_area("Synonyms (one per line)", height=64)
+        if st.form_submit_button("Add term"):
+            if not new_name.strip():
+                st.error("Name is required.")
+            else:
+                syn_list = [s.strip() for s in new_syns.splitlines() if s.strip()]
+                r = p_client.post(f"{parlant}/terms", json={
+                    "name": new_name.strip(),
+                    "description": new_desc.strip(),
+                    "synonyms": syn_list,
+                })
+                if r.status_code >= 400:
+                    st.error(r.text[:200])
+                else:
+                    st.success(f"Added term: {new_name}")
+                    st.rerun()
+
+
+# ── Context Variables helpers ──────────────────────────────────────────────────
+
+def fetch_context_vars(p_client: httpx.Client, parlant: str) -> list[dict]:
+    r = p_client.get(f"{parlant}/context-variables")
+    if r.status_code >= 400:
+        return []
+    return r.json() or []
+
+
+def _fetch_cv_default(p_client: httpx.Client, parlant: str, vid: str) -> str:
+    r = p_client.get(f"{parlant}/context-variables/{vid}/default")
+    if r.status_code >= 400:
+        return ""
+    data = r.json()
+    if data is None:
+        return ""
+    val = data.get("data") if isinstance(data, dict) else data
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val
+    return json.dumps(val, indent=2)
+
+
+def _set_cv_default(p_client: httpx.Client, parlant: str, vid: str, raw_text: str) -> None:
+    raw = raw_text.strip()
+    if not raw:
+        return
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = raw
+    r = p_client.put(f"{parlant}/context-variables/{vid}/default", json={"data": parsed})
+    if r.status_code >= 400:
+        raise RuntimeError(f"Set default value failed: {r.text[:200]}")
+
+
+def apply_context_vars_sync(p_client: httpx.Client, parlant: str, text: str) -> None:
+    items = json.loads(text)
+    if not isinstance(items, list):
+        raise ValueError("Root must be a JSON array.")
+
+    existing = fetch_context_vars(p_client, parlant)
+    old_by_id = {cv["id"]: cv for cv in existing if cv.get("id")}
+    old_ids = set(old_by_id.keys())
+    new_ids = {i["id"] for i in items if isinstance(i, dict) and i.get("id")}
+
+    for vid in old_ids:
+        if vid not in new_ids:
+            r = p_client.delete(f"{parlant}/context-variables/{vid}")
+            if r.status_code >= 400:
+                raise RuntimeError(f"Delete variable {vid}: {r.text[:200]}")
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        vid = item.get("id")
+        if vid and vid in old_by_id:
+            body = {k: item[k] for k in ("name", "description") if k in item}
+            if body:
+                r = p_client.patch(f"{parlant}/context-variables/{vid}", json=body)
+                if r.status_code >= 400:
+                    raise RuntimeError(f"Update variable: {r.text[:200]}")
+            if "default_value" in item:
+                _set_cv_default(p_client, parlant, vid, json.dumps(item["default_value"]) if not isinstance(item["default_value"], str) else item["default_value"])
+        else:
+            name = (item.get("name") or "").strip()
+            if not name:
+                raise ValueError("Each new variable needs a non-empty name.")
+            r = p_client.post(f"{parlant}/context-variables", json={
+                "name": name,
+                "description": item.get("description") or "",
+            })
+            if r.status_code >= 400:
+                raise RuntimeError(f"Create variable '{name}': {r.text[:200]}")
+            if "default_value" in item and item["default_value"] is not None:
+                new_vid = r.json().get("id")
+                if new_vid:
+                    dv = item["default_value"]
+                    _set_cv_default(p_client, parlant, new_vid, json.dumps(dv) if not isinstance(dv, str) else dv)
+
+
+def render_context_vars_tab(p_client: httpx.Client, parlant: str) -> None:
+    cvars = fetch_context_vars(p_client, parlant)
+
+    col_l, col_r = st.columns([3, 1])
+    with col_l:
+        st.subheader(f"Context Variables  ({len(cvars)} variables)")
+    with col_r:
+        if st.button("Refresh", key="refresh_cvars"):
+            st.rerun()
+
+    st.caption(
+        "Persistent state and configuration the agent carries across conversation turns. "
+        "Holds identity, phone format rules, API settings, and privacy flags."
+    )
+
+    # ── JSON bulk editor ───────────────────────────────────────────────────────
+    with st.expander("Bulk edit as JSON", expanded=False):
+        draft = []
+        for cv in cvars:
+            vid = cv.get("id")
+            dval_raw = _fetch_cv_default(p_client, parlant, vid) if vid else ""
+            try:
+                dval = json.loads(dval_raw) if dval_raw else None
+            except json.JSONDecodeError:
+                dval = dval_raw
+            draft.append({
+                "id": vid,
+                "name": cv.get("name") or "",
+                "description": cv.get("description") or "",
+                "default_value": dval,
+            })
+        cv_text = st.text_area("Context Variables JSON", value=json.dumps(draft, indent=2), height=320, key="cvars_json")
+        if st.button("Apply context variables JSON", key="apply_cvars_json"):
+            try:
+                apply_context_vars_sync(p_client, parlant, cv_text)
+                st.success("Context variables saved.")
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+
+    st.divider()
+
+    # ── Per-variable form editor ───────────────────────────────────────────────
+    if not cvars:
+        st.info("No context variables defined yet. Add one below or load the Heyo template from the **Create bot** tab.")
+    else:
+        for i, cv in enumerate(cvars):
+            vid = cv.get("id")
+            label = (cv.get("name") or "(unnamed)")[:60]
+            default_val = _fetch_cv_default(p_client, parlant, vid) if vid else ""
+            with st.expander(f"{i + 1}. **{label}**", expanded=False):
+                with st.form(f"cv_form_{vid}"):
+                    name = st.text_input("Name", value=cv.get("name") or "")
+                    desc = st.text_area("Description", value=cv.get("description") or "", height=100)
+                    dval = st.text_area(
+                        "Default value (string, number, JSON object/array)",
+                        value=default_val,
+                        height=80,
+                        help="Stored at key 'default'. Leave blank to skip. Objects/arrays must be valid JSON.",
+                    )
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        save = st.form_submit_button("Save")
+                    with c2:
+                        delete = st.form_submit_button("Delete", type="primary")
+                if save:
+                    r = p_client.patch(f"{parlant}/context-variables/{vid}", json={
+                        "name": name.strip(),
+                        "description": desc.strip(),
+                    })
+                    if r.status_code >= 400:
+                        st.error(f"Save failed: {r.text[:200]}")
+                    else:
+                        if dval.strip():
+                            try:
+                                _set_cv_default(p_client, parlant, vid, dval.strip())
+                            except RuntimeError as e:
+                                st.warning(str(e))
+                        st.success("Variable saved.")
+                        st.rerun()
+                if delete:
+                    r = p_client.delete(f"{parlant}/context-variables/{vid}")
+                    if r.status_code >= 400:
+                        st.error(r.text[:200])
+                    else:
+                        st.success("Deleted.")
+                        st.rerun()
+
+    st.divider()
+    st.markdown("**Add new context variable**")
+    with st.form("add_cv_form"):
+        new_name = st.text_input("Name")
+        new_desc = st.text_area("Description", height=80)
+        new_dval = st.text_area(
+            "Default value (optional — string, number, or JSON object/array)",
+            height=64,
+        )
+        if st.form_submit_button("Add variable"):
+            if not new_name.strip():
+                st.error("Name is required.")
+            else:
+                r = p_client.post(f"{parlant}/context-variables", json={
+                    "name": new_name.strip(),
+                    "description": new_desc.strip(),
+                })
+                if r.status_code >= 400:
+                    st.error(r.text[:200])
+                else:
+                    new_vid = r.json().get("id")
+                    if new_vid and new_dval.strip():
+                        try:
+                            _set_cv_default(p_client, parlant, new_vid, new_dval.strip())
+                        except RuntimeError as e:
+                            st.warning(str(e))
+                    st.success(f"Added: {new_name}")
+                    st.rerun()
+
+
+# ── Tools view ─────────────────────────────────────────────────────────────────
+
+def render_tools_tab(p_client: httpx.Client, parlant: str) -> None:
+    st.subheader("Tools & Services")
+    st.caption(
+        "Tools allow the agent to perform internal actions (API calls, human handoffs) during conversations. "
+        "Register HTTP or SDK services via Parlant to wire them."
+    )
+
+    r = p_client.get(f"{parlant}/services")
+    services = r.json() if r.status_code < 400 else []
+
+    st.markdown("**Registered Parlant services**")
+    if services:
+        for svc in services:
+            tools = svc.get("tools") or []
+            icon = "🔧"
+            with st.expander(f"{icon} {svc.get('name')} · {svc.get('kind')} · {len(tools)} tool(s)", expanded=False):
+                st.json({
+                    "name": svc.get("name"),
+                    "kind": svc.get("kind"),
+                    "url": svc.get("url"),
+                    "tools": tools,
+                })
+    else:
+        st.info("No external services registered.")
+
+    st.divider()
+    st.markdown("**Heyo tool schemas (from PDF spec)**")
+    st.caption(
+        "Reference config for the 3 Heyo tools. "
+        "To activate HTTP tools, register them as Parlant SDK services in `server.py`."
+    )
+
+    # Load tools_info from the spec file if available
+    tools_info: list[dict] = []
+    if HEYO_SPEC_PATH.is_file():
+        try:
+            spec = json.loads(HEYO_SPEC_PATH.read_text(encoding="utf-8"))
+            tools_info = spec.get("tools_info") or []
+        except Exception:
+            pass
+
+    if not tools_info:
+        st.warning("Could not load tool schemas from heyo_bot_spec.json.")
+        return
+
+    for t in tools_info:
+        enabled = t.get("enabled", True)
+        status = "✅ enabled" if enabled else "⏸️ disabled (future use)"
+        t_type = t.get("type", "?")
+        with st.expander(f"**{t['name']}**  ·  {t_type}  ·  {status}", expanded=False):
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.markdown(f"**Description:** {t.get('description', '')}")
+                if t.get("endpoint"):
+                    st.markdown(f"**Endpoint:** `{t.get('method', 'POST')} {t['endpoint']}`")
+                if t.get("response_visibility"):
+                    st.markdown(f"**Response visibility:** `{t['response_visibility']}`")
+                if t.get("response_mode"):
+                    st.markdown(f"**Response mode:** `{t['response_mode']}`")
+                if t.get("allowed_guidelines"):
+                    st.markdown("**Allowed guidelines:** " + ", ".join(f"`{g}`" for g in t["allowed_guidelines"]))
+            with c2:
+                params = t.get("parameters")
+                if params:
+                    st.markdown("**Parameters:**")
+                    for p in params:
+                        req = " *(required)*" if p.get("required") else ""
+                        st.markdown(f"- `{p['name']}` ({p.get('type', '?')}){req}")
+                        if p.get("description"):
+                            st.caption(p["description"])
+            if t.get("auth_header"):
+                st.info(
+                    f"Auth header: `{t['auth_header']}` — token stored in `account_detail_api_auth_token` context variable."
+                )
+
+
+# ── Bot profile / guideline / journey form renderers ──────────────────────────
+
+def render_bot_profile_form(client: httpx.Client, api: str, full_bot: dict) -> None:
+    bot_id = full_bot["id"]
+    st.subheader("Bot profile")
+    with st.form("bot_profile_form"):
+        name = st.text_input("Name", value=full_bot.get("name") or "")
+        desc = st.text_area(
+            "Description",
+            value=full_bot.get("description") or "",
+            height=180,
+            help="Full Parlant agent description (purpose, scope, tone, glossary notes, etc.).",
+        )
+        opts = ["FLUID", "COMPOSITED", "STRICT"]
+        cm = st.selectbox("Composition mode", opts, index=_composition_mode_index(full_bot.get("composition_mode")))
+        mei = st.number_input(
+            "Max engine iterations",
+            min_value=1,
+            max_value=30,
+            value=int(full_bot.get("max_engine_iterations") or 3),
+        )
+        submitted = st.form_submit_button("Save bot profile")
+        if submitted:
+            r = client.patch(f"{api}/bots/{bot_id}", json={
+                "name": name.strip(),
+                "description": desc.strip(),
+                "composition_mode": cm,
+                "max_engine_iterations": int(mei),
+            })
+            if r.status_code >= 400:
+                st.error(_detail_error(r))
+            else:
+                st.success("Bot profile saved.")
+                st.rerun()
+
+
+def render_guideline_forms(client: httpx.Client, api: str, full_bot: dict) -> None:
+    st.subheader("Guidelines (form editor)")
+    st.caption("Conditional behaviour rules — condition, action, criticality. Use JSON tab for bulk edits.")
+    glist = full_bot.get("guidelines") or []
+    if not glist:
+        st.info("No guidelines on this bot.")
+        return
+    for i, g in enumerate(glist):
+        gid = g.get("id")
+        if not gid:
+            continue
+        label = (g.get("condition") or "(no condition)")[:72]
+        with st.expander(f"{i + 1}. {label}", expanded=False):
+            with st.form(f"guideline_form_{gid}"):
+                cond = st.text_area("Condition", value=g.get("condition") or "", height=72)
+                act = st.text_area("Action", value=g.get("action") or "", height=120)
+                dscr = st.text_area("Description", value=g.get("description") or "", height=64)
+                crit_opts = ["low", "medium", "high"]
+                cr = str(g.get("criticality") or "medium").lower()
+                crit_i = crit_opts.index(cr) if cr in crit_opts else 1
+                crit = st.selectbox("Criticality", crit_opts, index=crit_i)
+                if st.form_submit_button("Save this guideline"):
+                    r = client.patch(f"{api}/guidelines/{gid}", json={
+                        "condition": cond.strip(),
+                        "action": act.strip() or None,
+                        "description": dscr.strip() or None,
+                        "criticality": crit,
+                    })
+                    if r.status_code >= 400:
+                        st.error(_detail_error(r))
+                    else:
+                        st.success("Guideline saved.")
+                        st.rerun()
+
+
+def render_journey_forms(client: httpx.Client, api: str, full_bot: dict) -> None:
+    st.subheader("Journeys (form editor)")
+    st.caption("Conversation flows — trigger conditions, node descriptions, edges. One condition per line.")
+    jlist = full_bot.get("journeys") or []
+    if not jlist:
+        st.info("No journeys on this bot.")
+        return
+    for i, j in enumerate(jlist):
+        jid = j.get("id")
+        if not jid:
+            continue
+        title0 = j.get("title") or f"Journey {i + 1}"
+        with st.expander(f"{i + 1}. {title0}", expanded=False):
+            with st.form(f"journey_form_{jid}"):
+                title = st.text_input("Title", value=j.get("title") or "")
+                desc = st.text_area("Description / nodes / flow", value=j.get("description") or "", height=160)
+                conds = j.get("conditions") or []
+                cond_text = st.text_area(
+                    "Trigger conditions (one per line)",
+                    value="\n".join(str(c) for c in conds),
+                    height=100,
+                )
+                if st.form_submit_button("Save this journey"):
+                    lines = [ln.strip() for ln in cond_text.splitlines() if ln.strip()]
+                    if not lines:
+                        st.error("Add at least one condition line.")
+                    else:
+                        r = client.patch(
+                            f"{api}/journeys/{jid}",
+                            json={"title": title.strip(), "description": desc.strip(), "conditions": lines},
+                        )
+                        if r.status_code >= 400:
+                            st.error(_detail_error(r))
+                        else:
+                            st.success("Journey saved.")
+                            st.rerun()
+
+
+# ── Chat helpers ───────────────────────────────────────────────────────────────
 
 def fetch_messages(client: httpx.Client, api: str, session_id: str) -> list[dict]:
     r = client.get(f"{api}/sessions/{session_id}/messages")
@@ -233,7 +776,6 @@ def wait_for_ai_reply(
     timeout_s: float = 10.0,
     poll_interval_s: float = 0.35,
 ) -> bool:
-    """Poll briefly for a new assistant message after send."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         time.sleep(poll_interval_s)
@@ -276,25 +818,17 @@ def ensure_session(client: httpx.Client, api: str, bot_id: str) -> str:
     return st.session_state[key]
 
 
-def load_heyo_bot_template() -> str:
-    """Full Heyo / Riva spec from PDF (committed JSON, no API secrets)."""
-    if not HEYO_SPEC_PATH.is_file():
-        raise FileNotFoundError(f"Missing {HEYO_SPEC_PATH}")
-    return HEYO_SPEC_PATH.read_text(encoding="utf-8")
-
+# ── Image helpers ──────────────────────────────────────────────────────────────
 
 def describe_image_for_support(image_bytes: bytes, mime: str) -> str:
-    """Use OpenAI vision so the Parlant bot receives text about the screenshot."""
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    env_values = dotenv_values(str(ENV_PATH)) if ENV_PATH.exists() else {}
+    api_key = str(env_values.get("OPENAI_API_KEY") or "").strip().strip('"').strip("'")
     if not api_key:
-        return (
-            "[Image attached — set OPENAI_API_KEY in your environment to auto-describe images]"
-        )
+        return "[Image attached — set OPENAI_API_KEY in .env to auto-describe images]"
     mime = mime or "image/jpeg"
     try:
         from openai import OpenAI
 
-        # Downscale to keep vision requests lightweight/fast.
         try:
             from PIL import Image
 
@@ -306,7 +840,6 @@ def describe_image_for_support(image_bytes: bytes, mime: str) -> str:
                 image_bytes = out.getvalue()
                 mime = "image/jpeg"
         except Exception:
-            # If Pillow is unavailable or conversion fails, send original bytes.
             pass
 
         b64 = base64.standard_b64encode(image_bytes).decode("ascii")
@@ -338,18 +871,16 @@ def describe_image_for_support(image_bytes: bytes, mime: str) -> str:
 
 
 def _image_placeholder_analysis_disabled() -> str:
-    """Clear instructions for the LLM when vision is off (sidebar toggle)."""
     return (
         "The customer attached an image in the chat UI, but automatic image-to-text is turned off "
         "(Analyze images in the sidebar). You cannot see the pixels. "
         "Reply helpfully: briefly acknowledge the attachment, ask them to describe what it shows "
-        "(error text, phone numbers, screen name) or to turn on “Analyze images” in the UI and resend. "
+        "(error text, phone numbers, screen name) or to turn on 'Analyze images' in the UI and resend. "
         "Do not say you are unable to help with images in general—focus on this limitation and next steps."
     )
 
 
 def describe_image_cached(image_bytes: bytes, mime: str) -> str:
-    """Cache image descriptions so repeated sends are instant."""
     cache = st.session_state.setdefault("image_desc_cache", {})
     digest = hashlib.sha1(image_bytes).hexdigest()
     if digest in cache:
@@ -359,137 +890,72 @@ def describe_image_cached(image_bytes: bytes, mime: str) -> str:
     return text
 
 
-def _composition_mode_index(raw: Any) -> int:
-    opts = ["FLUID", "COMPOSITED", "STRICT"]
-    cm = str(raw or "fluid").strip().upper()
-    if cm == "COMPOSITED" or "COMPOSIT" in cm:
-        return 1
-    if cm == "STRICT":
-        return 2
-    return 0
+def load_heyo_bot_template() -> str:
+    if not HEYO_SPEC_PATH.is_file():
+        raise FileNotFoundError(f"Missing {HEYO_SPEC_PATH}")
+    return HEYO_SPEC_PATH.read_text(encoding="utf-8")
 
 
-def render_bot_profile_form(client: httpx.Client, api: str, full_bot: dict) -> None:
-    bot_id = full_bot["id"]
-    st.subheader("Bot profile")
-    with st.form("bot_profile_form"):
-        name = st.text_input("Name", value=full_bot.get("name") or "")
-        desc = st.text_area(
-            "Description",
-            value=full_bot.get("description") or "",
-            height=180,
-            help="Full Parlant agent description (purpose, scope, tone, glossary notes, etc.).",
-        )
-        opts = ["FLUID", "COMPOSITED", "STRICT"]
-        cm = st.selectbox(
-            "Composition mode",
-            opts,
-            index=_composition_mode_index(full_bot.get("composition_mode")),
-        )
-        mei = st.number_input(
-            "Max engine iterations",
-            min_value=1,
-            max_value=30,
-            value=int(full_bot.get("max_engine_iterations") or 3),
-        )
-        submitted = st.form_submit_button("Save bot profile")
-        if submitted:
-            payload = {
-                "name": name.strip(),
-                "description": desc.strip(),
-                "composition_mode": cm,
-                "max_engine_iterations": int(mei),
-            }
-            r = client.patch(f"{api}/bots/{bot_id}", json=payload)
-            if r.status_code >= 400:
-                st.error(_detail_error(r))
-            else:
-                st.success("Bot profile saved.")
-                st.rerun()
+# ── Seed terms + context vars from spec ───────────────────────────────────────
 
-
-def render_guideline_forms(client: httpx.Client, api: str, full_bot: dict) -> None:
-    st.subheader("Guidelines (form editor)")
-    st.caption("Edit condition, action, description, and criticality. JSON tab is still available for bulk edits.")
-    glist = full_bot.get("guidelines") or []
-    if not glist:
-        st.info("No guidelines on this bot.")
-        return
-    for i, g in enumerate(glist):
-        gid = g.get("id")
-        if not gid:
+def seed_terms_from_spec(p_client: httpx.Client, parlant: str, spec: dict) -> tuple[int, list[str]]:
+    """Push all terms from spec into Parlant. Returns (count_added, errors)."""
+    terms = spec.get("terms") or []
+    errors: list[str] = []
+    added = 0
+    for t in terms:
+        name = (t.get("name") or "").strip()
+        if not name:
             continue
-        label = (g.get("condition") or "(no condition)")[:72]
-        with st.expander(f"{i + 1}. {label}", expanded=False):
-            with st.form(f"guideline_form_{gid}"):
-                cond = st.text_area("Condition", value=g.get("condition") or "", height=72)
-                act = st.text_area("Action", value=g.get("action") or "", height=120)
-                dscr = st.text_area("Description", value=g.get("description") or "", height=64)
-                crit_opts = ["low", "medium", "high"]
-                cr = str(g.get("criticality") or "medium").lower()
-                crit_i = crit_opts.index(cr) if cr in crit_opts else 1
-                crit = st.selectbox("Criticality", crit_opts, index=crit_i)
-                if st.form_submit_button("Save this guideline"):
-                    body = {
-                        "condition": cond.strip(),
-                        "action": act.strip() or None,
-                        "description": dscr.strip() or None,
-                        "criticality": crit,
-                    }
-                    r = client.patch(f"{api}/guidelines/{gid}", json=body)
-                    if r.status_code >= 400:
-                        st.error(_detail_error(r))
-                    else:
-                        st.success("Guideline saved.")
-                        st.rerun()
+        r = p_client.post(f"{parlant}/terms", json={
+            "name": name,
+            "description": t.get("description") or "",
+            "synonyms": t.get("synonyms") or [],
+        })
+        if r.status_code >= 400:
+            errors.append(f"Term '{name}': {r.text[:100]}")
+        else:
+            added += 1
+    return added, errors
 
 
-def render_journey_forms(client: httpx.Client, api: str, full_bot: dict) -> None:
-    st.subheader("Journeys (form editor)")
-    st.caption("One trigger condition per line. Save updates the journey in Parlant.")
-    jlist = full_bot.get("journeys") or []
-    if not jlist:
-        st.info("No journeys on this bot.")
-        return
-    for i, j in enumerate(jlist):
-        jid = j.get("id")
-        if not jid:
+def seed_context_vars_from_spec(p_client: httpx.Client, parlant: str, spec: dict) -> tuple[int, list[str]]:
+    """Push all context variables from spec into Parlant. Returns (count_added, errors)."""
+    cvars = spec.get("context_variables") or []
+    errors: list[str] = []
+    added = 0
+    for cv in cvars:
+        name = (cv.get("name") or "").strip()
+        if not name:
             continue
-        title0 = j.get("title") or f"Journey {i + 1}"
-        with st.expander(f"{i + 1}. {title0}", expanded=False):
-            with st.form(f"journey_form_{jid}"):
-                title = st.text_input("Title", value=j.get("title") or "")
-                desc = st.text_area("Description", value=j.get("description") or "", height=140)
-                conds = j.get("conditions") or []
-                cond_text = st.text_area(
-                    "Conditions (one per line)",
-                    value="\n".join(str(c) for c in conds),
-                    height=100,
-                )
-                if st.form_submit_button("Save this journey"):
-                    lines = [ln.strip() for ln in cond_text.splitlines() if ln.strip()]
-                    if not lines:
-                        st.error("Add at least one condition line.")
-                    else:
-                        r = client.patch(
-                            f"{api}/journeys/{jid}",
-                            json={
-                                "title": title.strip(),
-                                "description": desc.strip(),
-                                "conditions": lines,
-                            },
-                        )
-                        if r.status_code >= 400:
-                            st.error(_detail_error(r))
-                        else:
-                            st.success("Journey saved.")
-                            st.rerun()
+        r = p_client.post(f"{parlant}/context-variables", json={
+            "name": name,
+            "description": cv.get("description") or "",
+        })
+        if r.status_code >= 400:
+            errors.append(f"Var '{name}': {r.text[:100]}")
+            continue
+        added += 1
+        dv = cv.get("default_value")
+        if dv is not None:
+            vid = r.json().get("id")
+            if vid:
+                try:
+                    _set_cv_default(p_client, parlant, vid, json.dumps(dv) if not isinstance(dv, str) else dv)
+                except RuntimeError as e:
+                    errors.append(str(e))
+    return added, errors
 
+
+# ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     st.set_page_config(page_title="Bot console", layout="wide")
-    st.sidebar.markdown("### API")
-    api = st.sidebar.text_input("Base URL", value=DEFAULT_API).rstrip("/")
+
+    st.sidebar.markdown("### API endpoints")
+    api = st.sidebar.text_input("Otto API (bots / chat)", value=DEFAULT_API).rstrip("/")
+    parlant = st.sidebar.text_input("Parlant (terms / context vars)", value=DEFAULT_PARLANT).rstrip("/")
+
     st.sidebar.markdown("### Chat speed")
     fast_mode = st.sidebar.toggle("Fast mode", value=True, help="Shorter waits for snappier UI.")
     wait_timeout_s = st.sidebar.slider(
@@ -498,19 +964,23 @@ def main() -> None:
         max_value=20.0,
         value=6.0 if fast_mode else 10.0,
         step=0.5,
-        help="0 = do not block; messages appear on next refresh/send.",
     )
     image_scan_enabled = st.sidebar.toggle(
         "Analyze images",
         value=False,
-        help="Turn off to avoid vision latency. You can still send text messages quickly.",
+        help="Disable to avoid vision latency. Text messages remain fast.",
     )
     st.sidebar.caption("Run `python server.py` (8800) and `python api_server.py` (8801) first.")
 
-    tab_browse, tab_create = st.tabs(["Bots & chat", "Create bot"])
+    tab_bots, tab_terms, tab_cvars, tab_create = st.tabs([
+        "🤖  Bots & Chat",
+        "📖  Terms (Glossary)",
+        "🔧  Context Variables",
+        "➕  Create Bot",
+    ])
 
-    with tab_browse:
-        # Do not `return` from this block — Streamlit must still run the Create bot tab below.
+    # ── TAB: Bots & Chat ───────────────────────────────────────────────────────
+    with tab_bots:
         bots: list[dict] = []
         browse_err: str | None = None
         try:
@@ -526,7 +996,7 @@ def main() -> None:
         if browse_err:
             st.error(f"Could not load bots: {browse_err}")
         elif not bots:
-            st.info("No bots yet. Open the **Create bot** tab to add one.")
+            st.info("No bots yet. Open the **Create Bot** tab to add one.")
         else:
             labels = [f"{b.get('name') or 'Untitled'} ({b.get('id', '')[:8]}…)" for b in bots]
             choice = st.selectbox("Select bot", range(len(bots)), format_func=lambda i: labels[i])
@@ -552,7 +1022,7 @@ def main() -> None:
             with httpx.Client(timeout=60.0) as client:
                 fr = client.get(f"{api}/bots/{bot_id}")
                 if fr.status_code >= 400:
-                    st.warning(f"Could not load bot details: {_detail_error(fr)} — using list data only.")
+                    st.warning(f"Could not load bot details: {_detail_error(fr)}")
                     full_bot: dict = bot
                 else:
                     full_bot = fr.json()
@@ -562,17 +1032,17 @@ def main() -> None:
                 f"{len(full_bot.get('journeys') or [])} journeys"
             )
 
-            sub_forms, sub_chat, sub_g, sub_j = st.tabs(
-                ["Edit bot (forms)", "Chat", "Guidelines (JSON)", "Journeys (JSON)"]
-            )
+            sub_edit, sub_chat, sub_g, sub_j, sub_tools = st.tabs([
+                "Edit bot (forms)", "Chat", "Guidelines (JSON)", "Journeys (JSON)", "Tools",
+            ])
 
-            with sub_forms:
+            with sub_edit:
                 with httpx.Client(timeout=60.0) as client:
-                    fr = client.get(f"{api}/bots/{bot_id}")
-                    if fr.status_code >= 400:
-                        st.error(_detail_error(fr))
+                    fr2 = client.get(f"{api}/bots/{bot_id}")
+                    if fr2.status_code >= 400:
+                        st.error(_detail_error(fr2))
                     else:
-                        fb = fr.json()
+                        fb = fr2.json()
                         render_bot_profile_form(client, api, fb)
                         st.divider()
                         render_guideline_forms(client, api, fb)
@@ -587,9 +1057,7 @@ def main() -> None:
                         st.error(str(e))
                         sid = None
                     if sid:
-                        st.caption(
-                            f"Session `{sid[:12]}…` — use **Refresh list** to start a new session."
-                        )
+                        st.caption(f"Session `{sid[:12]}…` — use **Refresh list** to start a new session.")
                         msgs = fetch_messages(client, api, sid)
                         render_chat_messages(msgs)
                         up = st.file_uploader(
@@ -600,7 +1068,7 @@ def main() -> None:
                         if st.button(
                             "Send image only",
                             key=f"img_only_{bot_id}",
-                            help="Sends a vision summary to the bot (needs OPENAI_API_KEY).",
+                            help="Sends a vision summary to the bot.",
                             disabled=not up,
                         ):
                             ai_before = _count_ai_messages(msgs)
@@ -611,24 +1079,16 @@ def main() -> None:
                                     analysis = describe_image_cached(raw, mime)
                             else:
                                 analysis = _image_placeholder_analysis_disabled()
-                            payload = f"[User sent an image]\n{analysis}"
                             ir = client.post(
                                 f"{api}/sessions/{sid}/messages",
-                                json={"message": payload},
+                                json={"message": f"[User sent an image]\n{analysis}"},
                             )
                             if ir.status_code >= 400:
                                 st.error(_detail_error(ir))
                             else:
                                 if wait_timeout_s > 0:
                                     with st.spinner("Assistant is responding…"):
-                                        wait_for_ai_reply(
-                                            client,
-                                            api,
-                                            sid,
-                                            baseline_ai_count=ai_before,
-                                            timeout_s=float(wait_timeout_s),
-                                            poll_interval_s=0.25 if fast_mode else 0.35,
-                                        )
+                                        wait_for_ai_reply(client, api, sid, ai_before, float(wait_timeout_s), 0.25 if fast_mode else 0.35)
                                 st.rerun()
 
                         if prompt := st.chat_input("Message"):
@@ -641,27 +1101,14 @@ def main() -> None:
                                         if image_scan_enabled
                                         else _image_placeholder_analysis_disabled()
                                     )
-                                    user_msg = (
-                                        f"{user_msg}\n\n[Image details for support]\n"
-                                        f"{img_part}"
-                                    ).strip()
-                            pr = client.post(
-                                f"{api}/sessions/{sid}/messages",
-                                json={"message": user_msg},
-                            )
+                                user_msg = f"{user_msg}\n\n[Image details for support]\n{img_part}".strip()
+                            pr = client.post(f"{api}/sessions/{sid}/messages", json={"message": user_msg})
                             if pr.status_code >= 400:
                                 st.error(_detail_error(pr))
                             else:
                                 if wait_timeout_s > 0:
                                     with st.spinner("Assistant is responding…"):
-                                        wait_for_ai_reply(
-                                            client,
-                                            api,
-                                            sid,
-                                            baseline_ai_count=ai_before,
-                                            timeout_s=float(wait_timeout_s),
-                                            poll_interval_s=0.25 if fast_mode else 0.35,
-                                        )
+                                        wait_for_ai_reply(client, api, sid, ai_before, float(wait_timeout_s), 0.25 if fast_mode else 0.35)
                                 st.rerun()
 
             with sub_g:
@@ -671,19 +1118,49 @@ def main() -> None:
                         st.error(_detail_error(gr))
                     else:
                         full = gr.json()
+
+                        # ── File upload ──────────────────────────────────
+                        uploaded_g = st.file_uploader(
+                            "Upload guidelines JSON file  (replaces text area below)",
+                            type=["json"],
+                            key=f"g_upload_{bot_id}",
+                        )
+                        if uploaded_g is not None:
+                            try:
+                                g_file_text = uploaded_g.read().decode("utf-8")
+                                json.loads(g_file_text)  # validate
+                                st.session_state[f"gjson_val_{bot_id}"] = g_file_text
+                                st.success(f"Loaded {uploaded_g.name} — click Apply below.")
+                            except Exception as e:
+                                st.error(f"Invalid JSON file: {e}")
+
+                        default_g = st.session_state.get(
+                            f"gjson_val_{bot_id}",
+                            json.dumps(guidelines_draft(full), indent=2),
+                        )
                         g_text = st.text_area(
                             "Guidelines JSON",
-                            value=json.dumps(guidelines_draft(full), indent=2),
+                            value=default_g,
                             height=320,
                             key=f"gjson_{bot_id}",
                         )
                         if st.button("Apply guidelines JSON", key="apply_g"):
                             try:
                                 apply_guidelines_sync(client, api, bot_id, full, g_text)
+                                st.session_state.pop(f"gjson_val_{bot_id}", None)
                                 st.success("Saved.")
                                 st.rerun()
                             except Exception as e:
                                 st.error(str(e))
+
+                        # ── Download current ─────────────────────────────
+                        st.download_button(
+                            "Download guidelines JSON",
+                            data=json.dumps(guidelines_draft(full), indent=2),
+                            file_name="guidelines.json",
+                            mime="application/json",
+                            key=f"g_dl_{bot_id}",
+                        )
 
             with sub_j:
                 with httpx.Client(timeout=60.0) as client:
@@ -692,24 +1169,76 @@ def main() -> None:
                         st.error(_detail_error(jr))
                     else:
                         full = jr.json()
+
+                        # ── File upload ──────────────────────────────────
+                        uploaded_j = st.file_uploader(
+                            "Upload journeys JSON file  (replaces text area below)",
+                            type=["json"],
+                            key=f"j_upload_{bot_id}",
+                        )
+                        if uploaded_j is not None:
+                            try:
+                                j_file_text = uploaded_j.read().decode("utf-8")
+                                json.loads(j_file_text)  # validate
+                                st.session_state[f"jjson_val_{bot_id}"] = j_file_text
+                                st.success(f"Loaded {uploaded_j.name} — click Apply below.")
+                            except Exception as e:
+                                st.error(f"Invalid JSON file: {e}")
+
+                        default_j = st.session_state.get(
+                            f"jjson_val_{bot_id}",
+                            json.dumps(journeys_draft(full), indent=2),
+                        )
                         j_text = st.text_area(
                             "Journeys JSON",
-                            value=json.dumps(journeys_draft(full), indent=2),
+                            value=default_j,
                             height=320,
                             key=f"jjson_{bot_id}",
                         )
                         if st.button("Apply journeys JSON", key="apply_j"):
                             try:
                                 apply_journeys_sync(client, api, bot_id, full, j_text)
+                                st.session_state.pop(f"jjson_val_{bot_id}", None)
                                 st.success("Saved.")
                                 st.rerun()
                             except Exception as e:
                                 st.error(str(e))
 
+                        # ── Download current ─────────────────────────────
+                        st.download_button(
+                            "Download journeys JSON",
+                            data=json.dumps(journeys_draft(full), indent=2),
+                            file_name="journeys.json",
+                            mime="application/json",
+                            key=f"j_dl_{bot_id}",
+                        )
+
+            with sub_tools:
+                with httpx.Client(timeout=30.0) as p_client:
+                    render_tools_tab(p_client, parlant)
+
+    # ── TAB: Terms (Glossary) ──────────────────────────────────────────────────
+    with tab_terms:
+        try:
+            with httpx.Client(timeout=30.0) as p_client:
+                render_terms_tab(p_client, parlant)
+        except httpx.RequestError as e:
+            st.error(f"Cannot reach Parlant at {parlant}: {e}")
+
+    # ── TAB: Context Variables ─────────────────────────────────────────────────
+    with tab_cvars:
+        try:
+            with httpx.Client(timeout=30.0) as p_client:
+                render_context_vars_tab(p_client, parlant)
+        except httpx.RequestError as e:
+            st.error(f"Cannot reach Parlant at {parlant}: {e}")
+
+    # ── TAB: Create Bot ────────────────────────────────────────────────────────
     with tab_create:
-        st.markdown("Paste a full bot spec as JSON (`POST /bots`).")
+        st.markdown("Paste a full bot spec as JSON and click **Create bot**.")
         if "create_bot_spec_json" not in st.session_state:
             st.session_state.create_bot_spec_json = DEFAULT_CREATE_SPEC
+
         b1, b2 = st.columns(2)
         with b1:
             if st.button("Load Heyo (Riva) template"):
@@ -722,15 +1251,24 @@ def main() -> None:
             if st.button("Reset to minimal example"):
                 st.session_state.create_bot_spec_json = DEFAULT_CREATE_SPEC
                 st.rerun()
+
         st.text_area(
             "Bot spec (JSON)",
             height=420,
             key="create_bot_spec_json",
-            help="Use “Load Heyo (Riva) template” for the full PDF-aligned spec (data/heyo_bot_spec.json).",
+            help="Load Heyo (Riva) template for the full 6-component PDF spec.",
         )
+
+        also_seed = st.checkbox(
+            "Also seed Terms + Context Variables from spec",
+            value=True,
+            help="If the spec has 'terms' and 'context_variables' keys, push them to Parlant too.",
+        )
+
         if st.button("Create bot", type="primary"):
+            raw_spec = st.session_state.get("create_bot_spec_json") or "{}"
             try:
-                body = json.loads(st.session_state.get("create_bot_spec_json") or "{}")
+                body = json.loads(raw_spec)
             except json.JSONDecodeError as e:
                 st.error(f"Invalid JSON: {e}")
             else:
@@ -740,7 +1278,23 @@ def main() -> None:
                         st.error(_detail_error(cr))
                     else:
                         out = cr.json()
-                        st.success(f"Created: {out.get('bot_name')} (`{out.get('bot_id')}`)")
+                        st.success(f"Created bot: **{out.get('bot_name')}** (`{out.get('bot_id')}`)")
+
+                        if also_seed and (body.get("terms") or body.get("context_variables")):
+                            with httpx.Client(timeout=60.0) as p_client:
+                                if body.get("terms"):
+                                    t_added, t_errs = seed_terms_from_spec(p_client, parlant, body)
+                                    if t_errs:
+                                        st.warning(f"Terms seeded with errors: {'; '.join(t_errs)}")
+                                    else:
+                                        st.success(f"Seeded {t_added} terms into Parlant.")
+                                if body.get("context_variables"):
+                                    cv_added, cv_errs = seed_context_vars_from_spec(p_client, parlant, body)
+                                    if cv_errs:
+                                        st.warning(f"Context vars seeded with errors: {'; '.join(cv_errs)}")
+                                    else:
+                                        st.success(f"Seeded {cv_added} context variables into Parlant.")
+
                         st.rerun()
 
 

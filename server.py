@@ -37,6 +37,10 @@ from composio_tools import (
     slack_send_message,
     gmail_send_email,
 )
+
+# Import Heyo Support Bot tools — registers them in the built-in Parlant SDK service
+from heyo_tools import heyo_get_account_detail, pause_for_human_handoff, analyze_image
+
 import parlant.sdk as p
 from parlant.core.sessions import Event
 from dotenv import load_dotenv

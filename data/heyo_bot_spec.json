@@ -159,6 +159,275 @@
       "conditions": ["Customer message exactly matches a campaign keyword"]
     }
   ],
+  "terms": [
+    {
+      "name": "Heyo",
+      "description": "The product/service customers are asking support about, including WhatsApp-related features, calling-related features, and business account setup.",
+      "synonyms": ["Heyo app", "Heyo platform", "Heyo support", "Heyo tool"]
+    },
+    {
+      "name": "MyOperator",
+      "description": "The parent platform/company context in which Heyo support operates; customers may refer to it interchangeably with Heyo depending on what they purchased.",
+      "synonyms": ["My Operator", "MyOperator platform", "MyOperator support"]
+    },
+    {
+      "name": "WABA",
+      "description": "WhatsApp Business API used by businesses to send and receive WhatsApp messages at scale, including automation, templates, and campaigns.",
+      "synonyms": ["WhatsApp Business API", "WA Business API", "WhatsApp API", "WABA setup", "WABA onboarding"]
+    },
+    {
+      "name": "WABA Campaign",
+      "description": "A bulk WhatsApp messaging activity sent by a business to many users; often referred to as a broadcast or bulk message.",
+      "synonyms": ["campaign", "WhatsApp campaign", "broadcast", "bulk message", "bulk messaging", "blast", "message campaign"]
+    },
+    {
+      "name": "Campaign Keyword",
+      "description": "An exact customer message that triggers a predefined response; it must be treated as a direct lookup key rather than normal conversation text.",
+      "synonyms": ["keyword", "CTA keyword", "campaign trigger", "button text", "quick reply keyword"]
+    },
+    {
+      "name": "Superadmin Number",
+      "description": "The 10-digit phone number of the account's primary admin (superadmin), used to fetch account details and verify customer identity for support.",
+      "synonyms": ["admin number", "super admin number", "owner number", "primary admin number", "account admin number"]
+    },
+    {
+      "name": "Heyo Virtual Number",
+      "description": "The virtual phone number associated with a customer's Heyo account; it may be shared as 10 digits or 11 digits with a leading 0, which should be ignored.",
+      "synonyms": ["Heyo number", "virtual number", "Heyo phone number", "account number", "09123456789 format"]
+    },
+    {
+      "name": "Account Detail Lookup",
+      "description": "The internal process of calling the account detail tool using the superadmin number and a parameter choice to fetch account status and history for troubleshooting.",
+      "synonyms": ["account check", "account status check", "account verification", "lookup", "fetch account details"]
+    },
+    {
+      "name": "Parameter Choice",
+      "description": "A numeric selector used while fetching account details: 0=all data, 1=active account data, 2=previous last account, 3=previous second last account.",
+      "synonyms": ["parameter", "choice", "data selector", "account selector", "status selector"]
+    },
+    {
+      "name": "Escalation",
+      "description": "Involving a senior colleague or specialist from the support team when the customer is stuck, frustrated, or needs backend help; it should be framed as human support (not 'connect to an agent').",
+      "synonyms": ["specialist help", "senior help", "raise a ticket", "escalate", "loop in senior", "bring in my team"]
+    },
+    {
+      "name": "Recorded Demo",
+      "description": "A short prerecorded walkthrough video used only for sales/strategy questions and new users; it must not be offered to customers actively facing a problem.",
+      "synonyms": ["demo video", "video demo", "walkthrough", "recording", "10-minute demo"]
+    },
+    {
+      "name": "Live Demo",
+      "description": "A scheduled live product walkthrough intended for sales evaluation; it must not be offered when the customer is reporting an issue or stuck in support.",
+      "synonyms": ["product demo", "live walkthrough", "schedule demo", "demo call", "live session"]
+    },
+    {
+      "name": "Automated Reply",
+      "description": "An automated system-generated message (e.g., a generic 'Thank you for contacting...' response); when detected, the agent should pivot to the WABA campaigns pitch response.",
+      "synonyms": ["auto reply", "autoresponse", "automatic message", "system reply", "out of office style message"]
+    },
+    {
+      "name": "Knowledge File",
+      "description": "The single source of truth for responses; the agent must answer only using the uploaded knowledge JSON and must not invent links or facts.",
+      "synonyms": ["KB", "knowledge base", "uploaded JSON", "heyo_knowledge_v4dot1.json", "file search"]
+    },
+    {
+      "name": "Absolute Link Rule",
+      "description": "A strict policy that the agent may only share URLs found in the knowledge file and must never invent or guess a URL.",
+      "synonyms": ["no invented links", "no guessing URLs", "only from KB", "URL must match KB"]
+    },
+    {
+      "name": "Support Issue Keywords",
+      "description": "Words and phrases that indicate the customer likely has a problem (e.g., stuck, not working, error, failed, disabled, unable).",
+      "synonyms": ["stuck", "not working", "error", "failed", "disabled", "unable", "doesn't work", "issue"]
+    },
+    {
+      "name": "Sales Goal",
+      "description": "A sales-mode conversation where the user is new or evaluating Heyo; the agent answers using the knowledge file and may offer the recorded demo only if there is no support issue.",
+      "synonyms": ["pricing inquiry", "new user", "exploring", "evaluation", "plan details", "sales question"]
+    },
+    {
+      "name": "How-To Goal",
+      "description": "A guidance conversation where the customer wants steps or instructions (e.g., how to add staff or set up WhatsApp); the agent answers factually and stops without offering demos.",
+      "synonyms": ["how to", "steps", "setup guide", "process", "configure", "instructions"]
+    }
+  ],
+  "context_variables": [
+    {
+      "name": "agent_id",
+      "description": "Stable internal identifier for this support agent configuration; useful for logging, routing, and analytics across conversations.",
+      "default_value": "heyo_support_riva_v17"
+    },
+    {
+      "name": "agent_display_name",
+      "description": "Human-facing agent name used in UI or responses where the assistant identifies itself.",
+      "default_value": "Riva (Heyo Support)"
+    },
+    {
+      "name": "account_detail_scope_options",
+      "description": "Allowed scope values for fetching account details; constrains the agent to valid API parameter_choice values and their meanings.",
+      "default_value": [
+        {"label": "All API data", "value": 0},
+        {"label": "Active account data", "value": 1},
+        {"label": "Previous last account", "value": 2},
+        {"label": "Previous second last account", "value": 3}
+      ]
+    },
+    {
+      "name": "account_detail_default_scope",
+      "description": "Default scope used when calling the account detail API unless explicitly changed; prevents ambiguity about which account data is fetched.",
+      "default_value": 0
+    },
+    {
+      "name": "superadmin_phone_format",
+      "description": "Normalization and validation constraints for the superadmin phone number; ensures consistent 10-digit storage and prevents invalid inputs.",
+      "default_value": {
+        "normalized_length": 10,
+        "validation_regex": "^[0-9]{10}$",
+        "normalization_ops": ["trim", "remove_leading_zero_if_length_11"]
+      }
+    },
+    {
+      "name": "heyo_phone_format",
+      "description": "Normalization and validation constraints for the Heyo virtual number; allows empty or normalized 10-digit number and prevents invalid inputs.",
+      "default_value": {
+        "allow_empty": true,
+        "normalized_length": 10,
+        "validation_regex": "^$|^[0-9]{10}$"
+      }
+    },
+    {
+      "name": "account_detail_api_endpoint",
+      "description": "HTTP endpoint for fetching Heyo account details; used to avoid hallucinating the integration URL.",
+      "default_value": "https://support.myoperator.biz/apis/heyo-bot-get-account-detail"
+    },
+    {
+      "name": "account_detail_api_http_method",
+      "description": "HTTP method required by the account detail API; ensures correct request construction.",
+      "default_value": "POST"
+    },
+    {
+      "name": "account_detail_api_auth_header_name",
+      "description": "Authorization header key required by the account detail API; keeps header naming consistent.",
+      "default_value": "authorization"
+    },
+    {
+      "name": "account_detail_api_auth_token",
+      "description": "Authorization token used for the account detail API; required for authenticated calls.",
+      "default_value": "d00e3706637d3047631add88fa645c01ec02deaf8b3bff54c42c3e65ba5eadef"
+    },
+    {
+      "name": "account_detail_tool_refresh_cron",
+      "description": "Freshness schedule for refreshing account detail data when needed; stabilizes how often data may be refreshed.",
+      "default_value": "*/10 * * * *"
+    },
+    {
+      "name": "account_detail_raw_never_expose",
+      "description": "Privacy constraint indicating raw account detail responses must never be shown to the user; prevents accidental disclosure.",
+      "default_value": true
+    },
+    {
+      "name": "reserved_tool_get_user_details_enabled",
+      "description": "Flag indicating the get_user_details tool is disabled/reserved; prevents the agent from attempting to use it.",
+      "default_value": false
+    },
+    {
+      "name": "reserved_tool_get_user_details_endpoint",
+      "description": "Endpoint for the reserved get_user_details tool (currently disabled); stored to avoid guessing if later enabled.",
+      "default_value": "https://support.myoperator.biz/apis/heyo-bot"
+    }
+  ],
+  "tools_info": [
+    {
+      "name": "heyo_bot_get_account_detail",
+      "description": "Fetches Heyo account details using the superadmin phone number and a parameter selector. Used only for internal troubleshooting and escalation decisions.",
+      "type": "http",
+      "tool_id": "get_account_detail",
+      "enabled": true,
+      "consequential": false,
+      "endpoint": "https://support.myoperator.biz/apis/heyo-bot-get-account-detail",
+      "method": "POST",
+      "auth_header": "authorization",
+      "auth_token": "d00e3706637d3047631add88fa645c01ec02deaf8b3bff54c42c3e65ba5eadef",
+      "response_visibility": "internal_only",
+      "response_lifespan": "session",
+      "allowed_guidelines": ["support_issue_resolution", "account_verification", "billing_refund_issue", "account_suspended"],
+      "parameters": [
+        {
+          "name": "superadmin_number",
+          "type": "string",
+          "required": true,
+          "source": "customer",
+          "description": "The 10-digit phone number of the account's primary admin.",
+          "example": "9123456789"
+        },
+        {
+          "name": "parameter_choice",
+          "type": "integer",
+          "required": false,
+          "source": "context",
+          "default": 0,
+          "description": "Controls which account data to fetch.",
+          "allowed_values": [
+            {"value": 0, "meaning": "All account data"},
+            {"value": 1, "meaning": "Active account data"},
+            {"value": 2, "meaning": "Previous last account"},
+            {"value": 3, "meaning": "Previous second last account"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "get_user_details",
+      "description": "Fetches detailed Heyo user information using Heyo number and superadmin number. Intended for future use only — DO NOT call in production.",
+      "type": "http",
+      "tool_id": "get_user_details",
+      "enabled": false,
+      "consequential": false,
+      "endpoint": "https://support.myoperator.biz/apis/heyo-bot",
+      "method": "POST",
+      "auth_header": "authorization",
+      "auth_token": "d00e3706637d3047631add88fa645c01ec02deaf8b3bff54c42c3e65ba5eadef",
+      "response_visibility": "internal_only",
+      "allowed_guidelines": ["support_issue_resolution"],
+      "parameters": [
+        {
+          "name": "heyo_number",
+          "type": "string",
+          "required": true,
+          "source": "customer",
+          "adapter": "strip_leading_zero",
+          "description": "The Heyo virtual number. May be provided as 10 or 11 digits.",
+          "example": "9123456789"
+        },
+        {
+          "name": "superadmin_number",
+          "type": "string",
+          "required": true,
+          "source": "customer",
+          "description": "The 10-digit superadmin phone number.",
+          "example": "9123456789"
+        }
+      ]
+    },
+    {
+      "name": "pause_for_human_handoff",
+      "description": "Stops automated agent responses to allow a human specialist to take over the conversation.",
+      "type": "control",
+      "tool_id": "pause_for_human_handoff",
+      "enabled": true,
+      "consequential": true,
+      "response_mode": "manual",
+      "allowed_guidelines": [
+        "agent_transfer_protocol",
+        "frustration_detected",
+        "conversation_loop",
+        "backend_change_request",
+        "billing_refund_issue",
+        "waba_setup_issue",
+        "account_suspended"
+      ]
+    }
+  ],
   "composition_mode": "FLUID",
   "max_engine_iterations": 6
 }
