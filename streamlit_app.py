@@ -34,6 +34,8 @@ ENV_PATH = _APP_DIR / ".env"
 
 DEFAULT_API = os.getenv("OTTO_API_BASE", "http://localhost:8801").rstrip("/")
 DEFAULT_PARLANT = os.getenv("PARLANT_BASE", "http://localhost:8800").rstrip("/")
+# Seconds to poll for assistant reply after sending a chat message (no UI control).
+CHAT_WAIT_ASSISTANT_S = 6.0
 
 DEFAULT_CREATE_SPEC = """{
   "name": "Support Bot",
@@ -956,15 +958,6 @@ def main() -> None:
     api = st.sidebar.text_input("Otto API (bots / chat)", value=DEFAULT_API).rstrip("/")
     parlant = st.sidebar.text_input("Parlant (terms / context vars)", value=DEFAULT_PARLANT).rstrip("/")
 
-    st.sidebar.markdown("### Chat speed")
-    fast_mode = st.sidebar.toggle("Fast mode", value=True, help="Shorter waits for snappier UI.")
-    wait_timeout_s = st.sidebar.slider(
-        "Wait for assistant (seconds)",
-        min_value=0.0,
-        max_value=20.0,
-        value=6.0 if fast_mode else 10.0,
-        step=0.5,
-    )
     image_scan_enabled = st.sidebar.toggle(
         "Analyze images",
         value=False,
@@ -1086,9 +1079,10 @@ def main() -> None:
                             if ir.status_code >= 400:
                                 st.error(_detail_error(ir))
                             else:
-                                if wait_timeout_s > 0:
-                                    with st.spinner("Assistant is responding…"):
-                                        wait_for_ai_reply(client, api, sid, ai_before, float(wait_timeout_s), 0.25 if fast_mode else 0.35)
+                                with st.spinner("Assistant is responding…"):
+                                    wait_for_ai_reply(
+                                        client, api, sid, ai_before, CHAT_WAIT_ASSISTANT_S, 0.3
+                                    )
                                 st.rerun()
 
                         if prompt := st.chat_input("Message"):
@@ -1106,9 +1100,10 @@ def main() -> None:
                             if pr.status_code >= 400:
                                 st.error(_detail_error(pr))
                             else:
-                                if wait_timeout_s > 0:
-                                    with st.spinner("Assistant is responding…"):
-                                        wait_for_ai_reply(client, api, sid, ai_before, float(wait_timeout_s), 0.25 if fast_mode else 0.35)
+                                with st.spinner("Assistant is responding…"):
+                                    wait_for_ai_reply(
+                                        client, api, sid, ai_before, CHAT_WAIT_ASSISTANT_S, 0.3
+                                    )
                                 st.rerun()
 
             with sub_g:
